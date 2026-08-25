@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Put a visible image on EVERY OL archive card using Google Images.
+"""Populate every OL archive reference with a visible Google Images thumbnail.
 
-The site no longer depends on Football Kit Archive pages for displaying images.
-For each reference in data/ol-archive.json, search Google Images and save the
-first usable Google thumbnail locally. This is deliberately simple and robust:
-even if an archive page shows a CAPTCHA, the local image still renders.
+The importer uses data/ol-archive.json as the authoritative list of references,
+then searches Google Images and stores the first usable thumbnail locally. The
+site reads the generated data/fka-kits.json, so it never needs to load an
+archive page just to display a photo.
 """
 import json
 import re
@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 
 ARCHIVE = Path('data/ol-archive.json')
 OUT = Path('assets/kits/google')
-MANIFEST = Path('data/google-kit-images.json')
+MANIFEST = Path('data/fka-kits.json')
 OUT.mkdir(parents=True, exist_ok=True)
 MANIFEST.parent.mkdir(parents=True, exist_ok=True)
 
@@ -37,12 +37,10 @@ def google_images(query):
     r = S.get(url, timeout=30)
     r.raise_for_status()
     soup = BeautifulSoup(r.text, 'html.parser')
-    out = []
-    for img in soup.find_all('img'):
-        src = img.get('src') or ''
-        if src.startswith('https://encrypted-tbn0.gstatic.com/images'):
-            out.append(src)
-    return out
+    return [
+        img.get('src') for img in soup.find_all('img')
+        if (img.get('src') or '').startswith('https://encrypted-tbn0.gstatic.com/images')
+    ]
 
 
 def save_image(url, dest):
@@ -61,13 +59,13 @@ def main():
     records = []
     count = 0
 
-    for season, kits in archive.items():
-        for kit_type in kits:
+    for season, kit_types in archive.items():
+        for kit_type in kit_types:
             count += 1
-            key = f'{season}-{kit_type}'
-            name = f'OL {season} {kit_type}'
-            query = f'Olympique Lyonnais {season} {kit_type} football shirt jersey'
-            dest = OUT / (slug(key) + '.jpg')
+            kit_id = f'{season}-{kit_type}'
+            name = f'OL {season} · {kit_type}'
+            query = f'Olympique Lyonnais {season} {kit_type} maillot football shirt jersey'
+            dest = OUT / (slug(kit_id) + '.jpg')
             ok = dest.exists() and dest.stat().st_size > 1500
 
             if not ok:
@@ -83,13 +81,14 @@ def main():
                     print(f'GOOGLE ERROR [{count}/{total}] {name}: {e}')
 
             records.append({
-                'id': key,
+                'id': kit_id,
                 'season': season,
                 'name': name,
                 'type': kit_type,
-                'image': str(dest).replace('\\', '/') if ok else None,
+                'image': str(dest).replace('\\', '/') if ok else '',
                 'source': 'Google Images',
-                'query': query
+                'query': query,
+                'page': 'https://www.google.com/search?tbm=isch&q=' + quote(query)
             })
             print(f'[{count}/{total}] {"OK" if ok else "NO IMAGE"} {name}')
             time.sleep(0.35)
