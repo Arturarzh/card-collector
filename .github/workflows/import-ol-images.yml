@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'index.html'
       - 'scripts/import_fka_ol_images.py'
       - '.github/workflows/import-ol-images.yml'
   workflow_dispatch:
@@ -22,7 +23,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests playwright
           playwright install --with-deps chromium
-      - name: Import FKA images
+      - name: Import every OL kit image documented by FKA
         run: python scripts/import_fka_ol_images.py
       - name: Commit imported images and manifest
         run: |
