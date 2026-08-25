@@ -25,10 +25,10 @@ jobs:
           pip install requests beautifulsoup4
       - name: Find one Google Images thumbnail for every OL archive reference
         run: python scripts/import_fka_ol_images.py
-      - name: Commit imported images and manifest
+      - name: Commit imported images and live manifest
         run: |
           git config user.name 'ol-kit-vault-bot'
           git config user.email 'actions@users.noreply.github.com'
-          git add assets/kits/google data/google-kit-images.json
+          git add assets/kits/google data/fka-kits.json
           git diff --cached --quiet || git commit -m 'Add Google Images thumbnails for OL kit archive'
           git push
