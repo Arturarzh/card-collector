@@ -1,85 +1,103 @@
-import asyncio
+#!/usr/bin/env python3
+"""Put a visible image on EVERY OL archive card using Google Images.
+
+The site no longer depends on Football Kit Archive pages for displaying images.
+For each reference in data/ol-archive.json, search Google Images and save the
+first usable Google thumbnail locally. This is deliberately simple and robust:
+even if an archive page shows a CAPTCHA, the local image still renders.
+"""
 import json
-import os
 import re
+import time
 from pathlib import Path
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote
 
 import requests
-from playwright.async_api import async_playwright
+from bs4 import BeautifulSoup
 
-BASE = "https://www.footballkitarchive.com"
-HISTORY = f"{BASE}/fr/olympique-lyonnais-maillots-t7006/"
-OUT = Path("assets/kits")
-DATA = Path("data/fka-kits.json")
+ARCHIVE = Path('data/ol-archive.json')
+OUT = Path('assets/kits/google')
+MANIFEST = Path('data/google-kit-images.json')
 OUT.mkdir(parents=True, exist_ok=True)
-DATA.parent.mkdir(parents=True, exist_ok=True)
+MANIFEST.parent.mkdir(parents=True, exist_ok=True)
 
-TEAM_WORDS = ("olympique-lyonnais", "olympique lyonnais")
-EXCLUDE = ("training", "travel", "track", "rain", "bench", "staff", "polo", "sweatshirt", "hoodie", "jacket", "vest", "anthem")
+S = requests.Session()
+S.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/151.0 Safari/537.36',
+    'Accept-Language': 'fr-FR,fr;q=0.9,en;q=0.8'
+})
 
-def slug(s):
-    return re.sub(r"[^a-zA-Z0-9]+", "-", s.lower()).strip("-") or "kit"
 
-def season_from(text):
-    m = re.search(r"(19|20)\d{2}-\d{2}", text)
-    return m.group(0) if m else None
+def slug(value):
+    return re.sub(r'[^a-z0-9]+', '-', value.lower()).strip('-') or 'kit'
 
-def should_keep(label):
-    low = label.lower()
-    return any(w in low for w in TEAM_WORDS) and not any(x in low for x in EXCLUDE)
 
-async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1440, "height": 1000}, user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/131 Safari/537.36")
-        await page.goto(HISTORY, wait_until="domcontentloaded", timeout=120000)
-        await page.wait_for_timeout(2500)
-        links = await page.locator("a").evaluate_all("els => els.map(a => ({href:a.href, text:(a.innerText||a.textContent||'').trim()}))")
-        season_pages, seen = [], set()
-        for a in links:
-            season = season_from(a["text"])
-            href = a["href"]
-            if season and href.startswith(BASE) and season not in seen and "olympique-lyonnais" in href and "kits" in href:
-                seen.add(season); season_pages.append((season, href))
-        for y in range(1950, 2027):
-            season = f"{y}-{str((y+1)%100).zfill(2)}"
-            href = f"{BASE}/olympique-lyonnais-kits-{season}-t7006/"
-            if season not in seen: season_pages.append((season, href))
+def google_images(query):
+    url = 'https://www.google.com/search?tbm=isch&hl=en&q=' + quote(query)
+    r = S.get(url, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, 'html.parser')
+    out = []
+    for img in soup.find_all('img'):
+        src = img.get('src') or ''
+        if src.startswith('https://encrypted-tbn0.gstatic.com/images'):
+            out.append(src)
+    return out
 
-        results = []
-        for season, season_url in sorted(season_pages, reverse=True):
-            try:
-                await page.goto(season_url, wait_until="domcontentloaded", timeout=120000)
-                await page.wait_for_timeout(900)
-                anchors = await page.locator("a").evaluate_all("els => els.map(a => ({href:a.href, text:(a.innerText||a.textContent||'').trim(), title:a.title||''}))")
-                kits, kit_seen = [], set()
-                for a in anchors:
-                    label = (a["text"] or a["title"] or "").strip(); href = a["href"]
-                    if not href.startswith(BASE) or href in kit_seen or not should_keep(label): continue
-                    if "-kits-" in href and href.rstrip('/').endswith("t7006"): continue
-                    kit_seen.add(href); kits.append((label, href))
-                for label, href in kits:
-                    try:
-                        await page.goto(href, wait_until="domcontentloaded", timeout=120000)
-                        await page.wait_for_timeout(350)
-                        og = await page.locator('meta[property="og:image"]').get_attribute("content")
-                        if not og: og = await page.locator('meta[name="twitter:image"]').get_attribute("content")
-                        if not og: continue
-                        og = urljoin(BASE, og)
-                        safe = slug(label.replace("Olympique Lyonnais", "OL"))
-                        ext = os.path.splitext(urlparse(og).path)[1] or ".jpg"
-                        dest = OUT / f"{season}-{safe}{ext}"
-                        if not dest.exists():
-                            r = requests.get(og, headers={"User-Agent":"Mozilla/5.0"}, timeout=60)
-                            r.raise_for_status(); dest.write_bytes(r.content)
-                        results.append({"id": f"{season}-{safe}", "season": season, "name": label, "page": href, "image": str(dest).replace(os.sep, "/")})
-                    except Exception as e:
-                        print("IMAGE ERROR", season, label, e)
-            except Exception as e:
-                print("SEASON ERROR", season, season_url, e)
-        DATA.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"Imported {len(results)} OL kit images")
-        await browser.close()
 
-if __name__ == "__main__": asyncio.run(main())
+def save_image(url, dest):
+    r = S.get(url, timeout=30)
+    r.raise_for_status()
+    data = r.content
+    if len(data) < 1500:
+        return False
+    dest.write_bytes(data)
+    return True
+
+
+def main():
+    archive = json.loads(ARCHIVE.read_text(encoding='utf-8'))
+    total = sum(len(kits) for kits in archive.values())
+    records = []
+    count = 0
+
+    for season, kits in archive.items():
+        for kit_type in kits:
+            count += 1
+            key = f'{season}-{kit_type}'
+            name = f'OL {season} {kit_type}'
+            query = f'Olympique Lyonnais {season} {kit_type} football shirt jersey'
+            dest = OUT / (slug(key) + '.jpg')
+            ok = dest.exists() and dest.stat().st_size > 1500
+
+            if not ok:
+                try:
+                    for candidate in google_images(query)[:10]:
+                        try:
+                            if save_image(candidate, dest):
+                                ok = True
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    print(f'GOOGLE ERROR [{count}/{total}] {name}: {e}')
+
+            records.append({
+                'id': key,
+                'season': season,
+                'name': name,
+                'type': kit_type,
+                'image': str(dest).replace('\\', '/') if ok else None,
+                'source': 'Google Images',
+                'query': query
+            })
+            print(f'[{count}/{total}] {"OK" if ok else "NO IMAGE"} {name}')
+            time.sleep(0.35)
+
+    MANIFEST.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding='utf-8')
+    success = sum(1 for x in records if x['image'])
+    print(f'FINISHED: {success}/{total} images saved locally')
+
+
+if __name__ == '__main__':
+    main()
