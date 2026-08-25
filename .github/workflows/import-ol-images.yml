@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'index.html'
+      - 'data/ol-archive.json'
       - 'scripts/import_fka_ol_images.py'
       - '.github/workflows/import-ol-images.yml'
   workflow_dispatch:
@@ -12,7 +13,7 @@ permissions:
 jobs:
   import:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -21,14 +22,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests playwright
-          playwright install --with-deps chromium
-      - name: Import every OL kit image documented by FKA
+          pip install requests beautifulsoup4
+      - name: Find one Google Images thumbnail for every OL archive reference
         run: python scripts/import_fka_ol_images.py
       - name: Commit imported images and manifest
         run: |
           git config user.name 'ol-kit-vault-bot'
           git config user.email 'actions@users.noreply.github.com'
-          git add assets/kits data/fka-kits.json
-          git diff --cached --quiet || git commit -m 'Import OL kit reference images from Football Kit Archive'
+          git add assets/kits/google data/google-kit-images.json
+          git diff --cached --quiet || git commit -m 'Add Google Images thumbnails for OL kit archive'
           git push
