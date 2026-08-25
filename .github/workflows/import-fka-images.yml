@@ -1,25 +1,48 @@
-name: Import OL kit archive images
+name: Import and verify OL kit images
 on:
   push:
     paths:
       - 'scripts/import_fka_images.py'
       - '.github/workflows/import-fka-images.yml'
+      - 'data/ol-archive.json'
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: ol-kit-image-import
+  cancel-in-progress: false
 jobs:
   import-images:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install dependencies
-        run: pip install requests beautifulsoup4
-      - name: Import Football Kit Archive images
+        run: pip install --disable-pip-version-check requests beautifulsoup4 pillow
+      - name: Crawl every OL kit reference from Football Kit Archive
         run: python scripts/import_fka_images.py
-      - name: Commit local images
+      - name: Verify imported image files
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          report=json.load(open('data/fka-image-report.json', encoding='utf-8'))
+          print(json.dumps(report, indent=2, ensure_ascii=False))
+          root=pathlib.Path('.')
+          bad=[]
+          for rec in json.load(open('data/fka-images.json', encoding='utf-8')):
+              p=root/rec['image']
+              if not p.exists() or p.stat().st_size < 5000:
+                  bad.append(str(p))
+          print('FILES_CHECKED', len(json.load(open('data/fka-images.json', encoding='utf-8'))))
+          print('BAD_FILES', len(bad))
+          if bad:
+              print('\n'.join(bad[:50]))
+              raise SystemExit(1)
+          PY
+      - name: Commit imported images and verification report
         run: |
           git config user.name 'ol-kit-vault-bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add assets/kits data/fka-images.json
-          git diff --cached --quiet || git commit -m 'Import OL kit archive images locally'
+          git add assets/kits data/fka-images.json data/fka-image-report.json
+          git diff --cached --quiet || git commit -m 'Import and verify OL kit images from FKA'
           git push
