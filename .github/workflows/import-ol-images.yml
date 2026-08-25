@@ -1,0 +1,33 @@
+name: Import OL kit images
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/import_fka_ol_images.py'
+      - '.github/workflows/import-ol-images.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests playwright
+          playwright install --with-deps chromium
+      - name: Import FKA images
+        run: python scripts/import_fka_ol_images.py
+      - name: Commit imported images and manifest
+        run: |
+          git config user.name 'ol-kit-vault-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add assets/kits data/fka-kits.json
+          git diff --cached --quiet || git commit -m 'Import OL kit reference images from Football Kit Archive'
+          git push
